@@ -1,0 +1,5 @@
+build/
+.DS_Store
+*.dcm
+*.png
+!docs/*.png
