@@ -2,13 +2,13 @@ import struct, sys, os, math
 out = sys.argv[1]; os.makedirs(out, exist_ok=True)
 W, H = 256, 192
 
-def img():
+def img(cx=128, cy=96, bright=2500, bar=65):
     px = []
     for y in range(H):
         for x in range(W):
-            d = math.hypot(x-128, y-96)
-            v = 300 + int(2500*max(0, 1 - d/90))           # bright "bone" disc
-            if 60 < x < 70: v += 900                       # vertical bar
+            d = math.hypot(x-cx, y-cy)
+            v = 300 + int(bright*max(0, 1 - d/90))           # bright "bone" disc
+            if bar-5 < x < bar+5: v += 900                       # vertical bar
             if (x//16 + y//16) % 2 == 0: v += 60           # faint checker
             px.append(min(v, 4095))
     return px
@@ -23,12 +23,12 @@ def s(v):
     v = v.encode(); return v + (b" " if len(v) % 2 else b"")
 def us(v): return struct.pack("<H", v)
 
-def dataset(ts, pixel_el, photometric, bits_alloc=16, signed=0, tail=b""):
+def dataset(ts, pixel_el, photometric, bits_alloc=16, signed=0, tail=b"", patient="Test^Patient", date="20261101", time="101500"):
     seq_item = struct.pack("<HHI", 0xFFFE, 0xE000, 0xFFFFFFFF) + el(0x28, 0x10, b"US", us(8)) \
         + struct.pack("<HHI", 0xFFFE, 0xE00D, 0)
     seq = struct.pack("<HH2sHI", 0x08, 0x1140, b"SQ", 0, 0xFFFFFFFF) + seq_item + struct.pack("<HHI", 0xFFFE, 0xE0DD, 0)
-    d  = el(0x08, 0x20, b"DA", s("20261101")) + el(0x08, 0x60, b"CS", s("DX")) + seq
-    d += el(0x10, 0x10, b"PN", s("Test^Patient"))
+    d  = el(0x08, 0x20, b"DA", s(date)) + el(0x08, 0x30, b"TM", s(time)) + el(0x08, 0x60, b"CS", s("DX")) + seq
+    d += el(0x10, 0x10, b"PN", s(patient))
     d += el(0x28, 0x02, b"US", us(1)) + el(0x28, 0x04, b"CS", s(photometric))
     d += el(0x28, 0x10, b"US", us(H)) + el(0x28, 0x11, b"US", us(W))
     d += el(0x28, 0x100, b"US", us(bits_alloc)) + el(0x28, 0x101, b"US", us(12 if bits_alloc == 16 else 8))
@@ -92,4 +92,19 @@ def il(g, e, val): return struct.pack("<HHI", g, e, len(val)) + val
 d = il(0x28,0x02,us(1)) + il(0x28,0x04,s("MONOCHROME2")) + il(0x28,0x10,us(H)) + il(0x28,0x11,us(W)) \
   + il(0x28,0x100,us(16)) + il(0x28,0x101,us(12)) + il(0x28,0x103,us(0)) + il(0x7FE0,0x10,native)
 open(f"{out}/implicit.dcm", "wb").write(wrap(IMPL, d))
+
+# 6) A small "history": several patients with scans on different dates (for the library / compare view)
+series = os.path.join(out, "series"); os.makedirs(series, exist_ok=True)
+people = {
+    "Muster^Anna":   [("20240312", "093000", 120, 90), ("20250118", "141500", 128, 96), ("20251107", "081000", 136, 100)],
+    "Beispiel^Jonas": [("20250605", "110000", 100, 96), ("20251020", "160000", 150, 96)],
+    "Schmidt^Eva":   [("20251201", "120000", 128, 70)],
+}
+n = 0
+for name, scans in people.items():
+    for date, time, cx, cy in scans:
+        n += 1
+        data = b"".join(struct.pack("<H", 4095 - v) for v in img(cx=cx, cy=cy, bright=1800 + 300*n, bar=40 + 20*n))
+        open(f"{series}/{name.split('^')[0].lower()}_{date}.dcm", "wb").write(
+            wrap(EXPL, dataset(EXPL, el(0x7FE0, 0x10, b"OW", data), "MONOCHROME1", patient=name, date=date, time=time)))
 print("ok")

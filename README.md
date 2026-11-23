@@ -5,7 +5,9 @@ A tiny, native macOS app to **view DICOM X-ray images and convert them to PNG wi
 - **Small and fast:** a ~200 KB installer, no dependencies, no background services, no network access.
 - **Runs on every Mac:** universal binary for Apple silicon (arm64) and Intel (x86_64), macOS 11 or newer.
 - **Dark by default:** black background, bones bright. Inverted `MONOCHROME1` X-rays are fixed automatically.
-- **Convert:** export one image or a whole folder to PNG, from the app or the command line.
+- **History by patient:** every scan you open is remembered and listed in a sidebar, grouped by patient name and sorted by date (newest or oldest first).
+- **Compare scans:** select several scans to put them side by side on one canvas. Drag each scan to set how far apart they sit, and zoom them all together.
+- **Convert:** export one image, a patient's scans, or the compare view to PNG, from the app or the command line.
 
 > **Not a medical device.** This is a convenience viewer for personal use. It is not validated for diagnosis or clinical decisions. Always rely on the original images and your doctor's report.
 
@@ -29,21 +31,43 @@ You can verify the download against the checksums in the release notes, or build
 
 ## Using it
 
-Open a DICOM file or a whole folder (a CD's `DICOM` or `IMAGES` folder works, subfolders are scanned) with **File → Open** (⌘O), by dragging onto the window or the Dock icon, or via **Open With** in Finder.
+Open a DICOM file or a whole folder (a CD's `DICOM` or `IMAGES` folder works, subfolders are scanned) with **File → Open** (⌘O), the **+** button in the sidebar, by dragging onto the window or the Dock icon, or via **Open With** in Finder. Everything readable is added to the library in the sidebar.
+
+### Library and history
+
+- Scans are **grouped by patient name** (A to Z). Inside each patient they are **sorted by scan date**; switch between **Newest first** and **Oldest first** with the menu at the top of the sidebar (or **View → Sort**). Scans without a date go last.
+- The date comes from the DICOM acquisition date, falling back to the content or study date.
+- Click a scan to view it. **⌘-click or ⇧-click** to select several and compare them. Right-click a patient to **Compare All Scans**, or to remove them from the history.
+- Select scans and press **Delete** (or right-click → **Remove from History**) to forget them. This never deletes your DICOM files. **File → Clear History…** wipes the whole list.
+- The history is a small JSON file in `~/Library/Application Support/X-ray Viewer/library.json`. It stores file paths, patient names, dates and image sizes, and stays on your Mac. Files that were moved or deleted show as *(missing)*.
+
+### Comparing scans
+
+Select two or more scans and they appear side by side on one canvas, ordered by date.
+
+- **Move a scan:** drag it. Place scans as close, far apart, or even overlapping as you like. Click a scan to bring it to the front.
+- **Spacing:** the **Spacing** slider re-spaces all scans evenly; **Arrange** (⌘L) lines them up again.
+- **Zoom everything together:** pinch, scroll the mouse wheel, ⌘-scroll on a trackpad, use the **− / +** buttons or the zoom slider, **Fit** or **1:1**. One zoom applies to every scan, so you can inspect the same region across scans.
+- **Pan:** drag on the empty background, or two-finger scroll.
+- **Contrast per scan:** ⇧-drag on a scan (double-click resets it).
+- **Blend:** turns overlapping areas into a see-through screen blend, so you can lay one scan over another.
+- Up to 12 scans are shown at once.
 
 | Action | How |
 | --- | --- |
-| Next / previous image | → / ← |
-| Brightness & contrast (window/level) | Drag with the mouse |
-| Reset to the file's own setting | Double-click, or `R` |
+| Next / previous scan | → / ← |
+| Brightness & contrast (single scan) | Drag with the mouse |
+| Reset contrast | Double-click, or `R` |
 | Auto contrast | `A` |
 | Invert | `I` |
-| Zoom | Pinch, or mouse wheel (⌘+ / ⌘−) |
-| Pan | Two-finger scroll, or right-drag |
+| Zoom | Pinch, mouse wheel, ⌘+ / ⌘− |
+| Pan | Two-finger scroll, right-drag, or ⌥-drag |
 | Fit to window / actual size | ⌘0 / ⌘1 |
+| Show / hide the library | ⌃⌘S |
+| Arrange scans side by side / blend overlaps | ⌘L / `B` |
 | Show patient name, modality, date | ⌘I (hidden by default) |
-| Export current image as PNG | ⌘E |
-| Export all images as PNG | ⇧⌘E |
+| Export current view as PNG (the compare view too) | ⌘E |
+| Export all of a patient's scans as PNG | ⇧⌘E |
 
 ### Convert from the command line
 
@@ -82,7 +106,7 @@ cd dicom-xray-viewer-mac
 
 This produces `build/X-ray Viewer.app`, `build/XrayViewer-<version>.pkg` and `build/XrayViewer-<version>.dmg`. Set `VERSION=1.2.3 ./build.sh` to change the version number.
 
-The whole app is one Swift file, [`Sources/main.swift`](Sources/main.swift), using only AppKit and ImageIO: a DICOM parser, a lossless JPEG decoder, a windowing/rendering step, and a small window.
+The app is a handful of Swift files in [`Sources/`](Sources) using only AppKit and ImageIO: `DICOM.swift` (parser, lossless JPEG decoder, windowing and rendering), `Library.swift` (history and grouping), `Sidebar.swift` (patient list), `Canvas.swift` (single and compare view with shared zoom) and `main.swift` (window and menus).
 
 ### Test files
 
@@ -95,7 +119,7 @@ python3 tools/make_test_dicom.py samples
 
 ## Privacy
 
-The app works entirely offline on local files. It never uploads anything, and patient details are not shown unless you turn them on.
+The app works entirely offline on local files and never uploads anything. Patient names are shown in the sidebar library (they are how scans are grouped), and the history file described above is stored only on your Mac. Use **File → Clear History…** to remove it. The patient name overlay on the image itself is off by default.
 
 ## License
 

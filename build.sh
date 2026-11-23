@@ -4,12 +4,12 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-VERSION="${VERSION:-1.0.0}"
+VERSION="${VERSION:-1.1.0}"
 APP="build/X-ray Viewer.app"
 rm -rf build && mkdir -p build/slices "$APP/Contents/MacOS"
 
 for arch in arm64 x86_64; do
-  swiftc -O -swift-version 5 -target "$arch-apple-macos11.0" Sources/main.swift -o "build/slices/$arch"
+  swiftc -O -swift-version 5 -target "$arch-apple-macos11.0" Sources/*.swift -o "build/slices/$arch"
 done
 lipo -create build/slices/arm64 build/slices/x86_64 -output "$APP/Contents/MacOS/XrayViewer"
 sed "s/<string>1.0<\/string>/<string>$VERSION<\/string>/" Info.plist > "$APP/Contents/Info.plist"
