@@ -36,7 +36,10 @@ Open a DICOM file or a whole folder (a CD's `DICOM` or `IMAGES` folder works, su
 ### Library and history
 
 - Scans are **grouped by patient name** (A to Z), then **by day**, with the scans of that day listed by time. Switch between **Newest first** and **Oldest first** with the menu at the top of the sidebar (or **View → Sort**). Scans without a date go last.
-- Each scan is **named from its metadata**, for example "Unterschenkel links". The app uses the first of: series description, protocol name, study description, procedure description, body part. German umlauts are read correctly.
+- Each scan is **named from its metadata**. The name combines the distinct descriptions in the file (study, series, performed and requested procedure), for example "Unterschenkel · lat R"; if there are none it falls back to the protocol name or body part. German umlauts are read correctly.
+- **All metadata:** right-click a scan and choose **Show All Metadata…**, click the **ⓘ** button at the top right of the preview (shown when a single scan is selected), or use **View → Show All Metadata…** (⌥⌘I). The window lists every DICOM element, including nested sequences, with tag, name, VR and value. Type in the filter box to search (for example a word like "Unterschenkel" or a tag like "0008"), and use **Copy** to copy rows. This is the quickest way to see which field holds the name you want.
+- **The tree opens collapsed.** Each click on an arrow opens only the next level (patient, then day, then scans). **View → Collapse All / Expand All** are available.
+- **Settings (⌘,):** *Reopen the library tree as I left it* is on by default, so the patients and days you had expanded stay expanded the next time you start the app. Turn it off to always start fully collapsed.
 - The date comes from the DICOM acquisition date, falling back to the content or study date.
 - Click a scan to view it. **⌘-click or ⇧-click** to select several and compare them. Double-click a patient or a day (or right-click it) to **compare all of its scans**, or to remove them from the history.
 - Select scans and press **Delete** (or right-click → **Remove from History**) to forget them. This never deletes your DICOM files. **File → Clear History…** wipes the whole list.

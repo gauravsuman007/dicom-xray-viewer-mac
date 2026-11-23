@@ -33,6 +33,8 @@ final class Canvas: NSView {
     var onTileReset: ((Tile) -> Void)?
     var onActiveChange: (() -> Void)?
     var onDrop: (([URL]) -> Void)?
+    var onInfo: (() -> Void)?
+    private let infoButton = NSButton()
 
     var compare: Bool { tiles.count > 1 }
     private let bottomInset: CGFloat = 54
@@ -255,6 +257,17 @@ final class Canvas: NSView {
         stack.translatesAutoresizingMaskIntoConstraints = false
         bar.addSubview(stack)
         addSubview(bar)
+        infoButton.image = NSImage(systemSymbolName: "info.circle", accessibilityDescription: "Show all metadata")
+        infoButton.isBordered = false; infoButton.contentTintColor = NSColor(white: 0.9, alpha: 1)
+        infoButton.imageScaling = .scaleProportionallyUpOrDown
+        infoButton.toolTip = "Show all metadata (⌥⌘I)"
+        infoButton.target = self; infoButton.action = #selector(infoTapped)
+        infoButton.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(infoButton)
+        NSLayoutConstraint.activate([
+            infoButton.topAnchor.constraint(equalTo: topAnchor, constant: 10), infoButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            infoButton.widthAnchor.constraint(equalToConstant: 26), infoButton.heightAnchor.constraint(equalToConstant: 26),
+        ])
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: bar.leadingAnchor), stack.trailingAnchor.constraint(equalTo: bar.trailingAnchor),
             stack.topAnchor.constraint(equalTo: bar.topAnchor), stack.bottomAnchor.constraint(equalTo: bar.bottomAnchor),
@@ -266,12 +279,14 @@ final class Canvas: NSView {
     private func updateControls() {
         for v in compareControls { v.isHidden = !compare }
         bar.isHidden = tiles.isEmpty
+        infoButton.isHidden = tiles.count != 1
     }
     private func syncControls() {
         zoomSlider.doubleValue = log2(Double(k))
         zoomLabel.stringValue = "\(Int((k * 100).rounded()))%"
     }
 
+    @objc private func infoTapped() { onInfo?() }
     @objc private func zoomSliderChanged() { setK(CGFloat(pow(2, zoomSlider.doubleValue)), about: viewportCenter) }
     @objc private func zoomInTapped() { zoomCentered(1.25) }
     @objc private func zoomOutTapped() { zoomCentered(0.8) }

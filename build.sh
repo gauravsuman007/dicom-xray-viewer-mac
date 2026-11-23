@@ -4,7 +4,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-VERSION="${VERSION:-1.2.0}"
+VERSION="${VERSION:-1.3.0}"
 APP="build/X-ray Viewer.app"
 rm -rf build && mkdir -p build/slices "$APP/Contents/MacOS"
 

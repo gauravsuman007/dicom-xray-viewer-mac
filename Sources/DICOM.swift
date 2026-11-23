@@ -58,7 +58,7 @@ struct DicomParser {
         0x00280100, 0x00280101, 0x00280103, 0x00281050, 0x00281051, 0x00281052, 0x00281053,
     ]
 
-    struct Header { var group: Int; var elem: Int; var len: Int; var hdr: Int }   // len < 0: undefined length
+    struct Header { var group: Int; var elem: Int; var len: Int; var hdr: Int; var vr = "" }   // len < 0: undefined length
 
     func header(at p: Int, explicit: Bool) -> Header? {
         guard p >= 0, p + 8 <= b.count else { return nil }
@@ -69,9 +69,9 @@ struct DicomParser {
             let vr = String(decoding: b[(p + 4)...(p + 5)], as: UTF8.self)
             if DicomParser.longVRs.contains(vr) {
                 guard p + 12 <= b.count else { return nil }
-                return Header(group: g, elem: e, len: L(u32(p + 8)), hdr: 12)
+                return Header(group: g, elem: e, len: L(u32(p + 8)), hdr: 12, vr: vr)
             }
-            return Header(group: g, elem: e, len: u16(p + 6), hdr: 8)
+            return Header(group: g, elem: e, len: u16(p + 6), hdr: 8, vr: vr)
         }
         return Header(group: g, elem: e, len: L(u32(p + 4)), hdr: 8)
     }
@@ -183,8 +183,17 @@ struct DicomParser {
         im.time = String((t.replacingOccurrences(of: ":", with: "") + "000000").prefix(6))
         if t.isEmpty { im.time = "" }
         im.desc = str(0x00081030) ?? str(0x00180015) ?? ""
-        // Scan name: the most specific description the file has (series > protocol > study > procedure > body part).
-        im.title = [0x0008103E, 0x00181030, 0x00081030, 0x00400254, 0x00321060, 0x00180015].compactMap { str($0) }.first ?? ""
+        // Scan name: the distinct descriptions the file carries (study, series, procedure…), most general first.
+        var parts: [String] = []
+        for k: UInt32 in [0x00081030, 0x0008103E, 0x00400254, 0x00321060] {
+            guard let v = str(k) else { continue }
+            let l = v.lowercased()
+            if parts.contains(where: { $0.lowercased().contains(l) }) { continue }
+            parts.removeAll { l.contains($0.lowercased()) }
+            parts.append(v)
+        }
+        if parts.isEmpty { parts = [0x00181030, 0x00180015].compactMap { str($0) }.prefix(1).map { $0 } }
+        im.title = parts.prefix(3).joined(separator: " · ")
         let lat = str(0x00200060) ?? "", pos = str(0x00185101) ?? ""
         im.view = [lat, pos].filter { !$0.isEmpty }.joined(separator: " ")
         if metadataOnly { return im }

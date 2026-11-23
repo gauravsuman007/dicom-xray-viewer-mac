@@ -13,6 +13,7 @@ struct ScanEntry: Codable, Hashable {
     var desc: String
     var title: String?          // scan name from metadata (nil = not read yet by this version)
     var view: String?           // laterality / view position
+    var meta: Int?              // metadata reader version that produced this entry
     var rows: Int
     var cols: Int
     var added: Date
@@ -33,6 +34,7 @@ struct ScanEntry: Codable, Hashable {
 }
 
 final class Library {
+    static let metaVersion = 2
     private(set) var entries: [String: ScanEntry] = [:]
     let fileURL: URL
 
@@ -64,7 +66,7 @@ final class Library {
         else { return nil }
         let path = url.standardizedFileURL.path
         return ScanEntry(path: path, patient: im.patient, patientID: im.patientID, date: im.date, time: im.time,
-                         modality: im.modality, desc: im.desc, title: im.title, view: im.view, rows: im.rows, cols: im.cols, added: Date(), lastOpened: nil)
+                         modality: im.modality, desc: im.desc, title: im.title, view: im.view, meta: Library.metaVersion, rows: im.rows, cols: im.cols, added: Date(), lastOpened: nil)
     }
 
     /// Adds files in the background; `done` runs on the main thread with the paths that were readable.
@@ -87,7 +89,7 @@ final class Library {
 
     /// Entries saved by an older version lack the scan name; re-read just their headers once.
     func refreshStale(done: @escaping () -> Void) {
-        let stale = entries.values.filter { $0.title == nil && $0.exists }.map { $0.path }
+        let stale = entries.values.filter { ($0.meta ?? 0) < Library.metaVersion && $0.exists }.map { $0.path }
         guard !stale.isEmpty else { return }
         DispatchQueue.global(qos: .utility).async {
             let fresh = stale.compactMap { Library.entry(for: URL(fileURLWithPath: $0)) }

@@ -16,6 +16,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     var generation = 0
     var truncatedNote: String?
     let maxCompare = 12
+    var metaWindows: [MetadataWindow] = []
+    var prefs: PreferencesWindow?
     let emptyMessage = "Select a scan in the sidebar, or open / drop DICOM files (⌘O)"
 
     // MARK: Launch
@@ -44,6 +46,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         canvas.message = emptyMessage
         canvas.onDrop = { [weak self] in self?.open($0) }
         canvas.onActiveChange = { [weak self] in self?.refreshOverlay() }
+        canvas.onInfo = { [weak self] in self?.showMetadata() }
         canvas.onTileReset = { [weak self] t in
             t.wl = defaultWL(t.image); self?.refreshTile(t); self?.refreshOverlay()
         }
@@ -58,6 +61,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         _ = sidebar.view
         sidebar.onSelect = { [weak self] in self?.selectionChanged($0) }
         sidebar.onAdd = { [weak self] in self?.openPanel() }
+        sidebar.onShowMetadata = { [weak self] in self?.showMetadata(path: $0) }
         sidebar.onRemove = { [weak self] paths in
             guard let self, !paths.isEmpty else { return }
             self.library.remove(paths); self.syncLibrary()
@@ -87,11 +91,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     func devSnapshotIfRequested() {
         let env = ProcessInfo.processInfo.environment
         guard let out = env["XRAY_SNAPSHOT"] else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { if env["XRAY_SELECT_ALL"] != nil { self.sidebar.selectAllScans() } }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            if env["XRAY_SELECT_ALL"] != nil { self.sidebar.selectAllScans() }
+            if env["XRAY_META"] != nil { self.showMetadata() }
+        }
         DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) {
             let p = Process()
             p.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
-            p.arguments = ["-x", "-o", "-l", String(self.window.windowNumber), out]
+            let target = env["XRAY_META"] != nil ? (self.metaWindows.first?.window ?? self.window!) : self.window!
+            p.arguments = ["-x", "-o", "-l", String(target.windowNumber), out]
             try? p.run(); p.waitUntilExit()
             NSApp.terminate(nil)
         }
@@ -114,6 +122,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         let arrowL = String(Character(UnicodeScalar(NSLeftArrowFunctionKey)!)), arrowR = String(Character(UnicodeScalar(NSRightArrowFunctionKey)!))
 
         let app = submenu("X-ray Viewer")
+        add(app, "Settings…", #selector(openSettings), ",")
+        app.addItem(.separator())
         add(app, "Quit X-ray Viewer", #selector(NSApplication.terminate(_:)), "q", target: NSApp)
 
         let file = submenu("File")
@@ -126,8 +136,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         file.addItem(.separator())
         add(file, "Close", #selector(NSWindow.performClose(_:)), "w", target: nil)
 
+        let edit = submenu("Edit")
+        add(edit, "Copy", Selector(("copy:")), "c", target: nil)
+        add(edit, "Select All", Selector(("selectAll:")), "a", target: nil)
+
         let view = submenu("View")
         add(view, "Show/Hide Library", #selector(NSSplitViewController.toggleSidebar(_:)), "s", [.command, .control], target: splitVC)
+        add(view, "Collapse All", #selector(collapseAllAction), "")
+        add(view, "Expand All", #selector(expandAllAction), "")
+        view.addItem(.separator())
         add(view, "Sort Newest First", #selector(sortNewest), "")
         add(view, "Sort Oldest First", #selector(sortOldest), "")
         view.addItem(.separator())
@@ -138,6 +155,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         add(view, "Reset Window/Level", #selector(resetWindowAction), "r", [])
         add(view, "Auto Window/Level", #selector(autoWindow), "a", [])
         add(view, "Show Patient Info", #selector(togglePatient), "i", .command)
+        add(view, "Show All Metadata…", #selector(showMetadataAction), "i", [.command, .option])
         view.addItem(.separator())
         add(view, "Zoom In", #selector(zoomIn), "+")
         add(view, "Zoom Out", #selector(zoomOut), "-")
@@ -160,6 +178,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         default: break
         }
         return true
+    }
+
+    @objc func collapseAllAction() { sidebar.collapseAll() }
+    @objc func expandAllAction() { sidebar.expandAll() }
+
+    @objc func openSettings() {
+        if prefs == nil {
+            let p = PreferencesWindow()
+            p.onRestoreChanged = { [weak self] _ in self?.sidebar.persistExpandedState() }
+            prefs = p
+        }
+        prefs?.show()
+    }
+
+    // Metadata viewer: right-click a scan, the info button on a single scan, or View menu.
+    @objc func showMetadataAction() { showMetadata() }
+    func showMetadata(path: String? = nil) {
+        let target = path ?? canvas.active?.path ?? (canvas.tiles.count == 1 ? canvas.tiles[0].path : nil) ?? sidebar.selectedPaths.first
+        guard let target else { NSSound.beep(); return }
+        if let open = metaWindows.first(where: { $0.window.title.hasSuffix((target as NSString).lastPathComponent) }) { open.show(); return }
+        do {
+            let url = URL(fileURLWithPath: target)
+            let w = MetadataWindow(url: url, rows: try Loader.dump(url))
+            w.onClose = { [weak self] w in self?.metaWindows.removeAll { $0 === w } }
+            metaWindows.append(w); w.show()
+        } catch { alert("Cannot read metadata", "\(error)") }
     }
 
     @objc func prev() { sidebar.selectAdjacent(-1) }
@@ -383,6 +427,7 @@ if args.first == "--convert" {
     exit(fails.isEmpty && ok > 0 ? 0 : 1)
 }
 
+UserDefaults.standard.register(defaults: [SidebarViewController.restoreKey: true])   // "reopen tree as I left it": on by default
 let application = NSApplication.shared
 let delegate = AppDelegate()
 application.delegate = delegate

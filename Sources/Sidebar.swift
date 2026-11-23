@@ -77,14 +77,27 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     private(set) var ascending = false
     private var entries: [ScanEntry] = []
     private var patients: [PatientNode] = []
-    private var collapsed = Set<String>()      // patient names and "patient|date" day keys
+    private var expanded = Set<String>()       // patient names and "patient|date" day keys that are open
+    var onShowMetadata: ((String) -> Void)?
     private var suppress = false
 
     private let outline = LibraryOutline()
     private let sortPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let emptyLabel = NSTextField(wrappingLabelWithString: "No scans yet.\n\nOpen or drop DICOM files or a folder (⌘O). Everything you open is remembered here, grouped by patient.")
 
+    static let restoreKey = "restoreTreeState", expandedKey = "treeExpanded"
+    private var restoreState: Bool { UserDefaults.standard.bool(forKey: SidebarViewController.restoreKey) }
+
+    /// Called when the "remember tree state" setting changes.
+    func persistExpandedState() {
+        if restoreState { UserDefaults.standard.set(Array(expanded), forKey: SidebarViewController.expandedKey) }
+        else { UserDefaults.standard.removeObject(forKey: SidebarViewController.expandedKey) }
+    }
+    func collapseAll() { outline.collapseItem(nil, collapseChildren: true) }
+    func expandAll() { outline.expandItem(nil, expandChildren: true) }
+
     override func loadView() {
+        if restoreState { expanded = Set(UserDefaults.standard.stringArray(forKey: SidebarViewController.expandedKey) ?? []) }
         let root = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: 290, height: 700))
         root.material = .sidebar; root.blendingMode = .behindWindow; root.state = .followsWindowActiveState
         view = root
@@ -159,7 +172,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         for p in patients {                      // make sure the target scans are visible
             for d in p.days where d.scans.contains(where: { set.contains($0.entry.path) }) {
                 outline.expandItem(p); outline.expandItem(d)
-                collapsed.remove(p.name); collapsed.remove(d.key)
+                expanded.insert(p.name); expanded.insert(d.key)
             }
         }
         var rows = IndexSet()
@@ -168,6 +181,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         }
         outline.selectRowIndexes(rows, byExtendingSelection: false)
         if let first = rows.first { outline.scrollRowToVisible(first) }
+        persistExpandedState()
     }
 
     func selectAdjacent(_ d: Int) {
@@ -190,9 +204,9 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         patients = buildGroups(entries, ascending: ascending)
         suppress = true
         outline.reloadData()
-        for p in patients where !collapsed.contains(p.name) {
+        for p in patients where expanded.contains(p.name) {           // only what was open stays open
             outline.expandItem(p)
-            for d in p.days where !collapsed.contains(d.key) { outline.expandItem(d) }
+            for d in p.days where expanded.contains(d.key) { outline.expandItem(d) }
         }
         suppress = false
         select(paths: paths)
@@ -237,13 +251,15 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     }
     func outlineViewItemDidCollapse(_ n: Notification) {
         guard !suppress else { return }
-        if let p = n.userInfo?["NSObject"] as? PatientNode { collapsed.insert(p.name) }
-        if let d = n.userInfo?["NSObject"] as? DayNode { collapsed.insert(d.key) }
+        if let p = n.userInfo?["NSObject"] as? PatientNode { expanded.remove(p.name) }
+        if let d = n.userInfo?["NSObject"] as? DayNode { expanded.remove(d.key) }
+        persistExpandedState()
     }
     func outlineViewItemDidExpand(_ n: Notification) {
         guard !suppress else { return }
-        if let p = n.userInfo?["NSObject"] as? PatientNode { collapsed.remove(p.name) }
-        if let d = n.userInfo?["NSObject"] as? DayNode { collapsed.remove(d.key) }
+        if let p = n.userInfo?["NSObject"] as? PatientNode { expanded.insert(p.name) }
+        if let d = n.userInfo?["NSObject"] as? DayNode { expanded.insert(d.key) }
+        persistExpandedState()
     }
 
     // MARK: Context menu
@@ -269,6 +285,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         } else if outline.item(atRow: row) is ScanNode {
             var paths = selectedPaths
             if let n = outline.item(atRow: row) as? ScanNode, !paths.contains(n.entry.path) { paths = [n.entry.path] }
+            if let n = outline.item(atRow: row) as? ScanNode { add("Show All Metadata…", #selector(menuMetadata(_:)), [n.entry.path]) }
             add("Show in Finder", #selector(menuReveal(_:)), paths)
             add(paths.count > 1 ? "Remove \(paths.count) Scans from History" : "Remove from History", #selector(menuRemove(_:)), paths)
         }
@@ -282,6 +299,9 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         if paths.count > 1 { select(paths: paths, notify: true) }
     }
     @objc private func menuCompare(_ s: NSMenuItem) { select(paths: s.representedObject as? [String] ?? [], notify: true) }
+    @objc private func menuMetadata(_ s: NSMenuItem) {
+        if let p = (s.representedObject as? [String])?.first { onShowMetadata?(p) }
+    }
     @objc private func menuRemove(_ s: NSMenuItem) { onRemove?(s.representedObject as? [String] ?? []) }
     @objc private func menuReveal(_ s: NSMenuItem) {
         let urls = (s.representedObject as? [String] ?? []).map { URL(fileURLWithPath: $0) }
