@@ -23,11 +23,12 @@ def s(v):
     v = v.encode(); return v + (b" " if len(v) % 2 else b"")
 def us(v): return struct.pack("<H", v)
 
-def dataset(ts, pixel_el, photometric, bits_alloc=16, signed=0, tail=b"", patient="Test^Patient", date="20261101", time="101500"):
+def dataset(ts, pixel_el, photometric, bits_alloc=16, signed=0, tail=b"", patient="Test^Patient", date="20261101", time="101500", series=""):
     seq_item = struct.pack("<HHI", 0xFFFE, 0xE000, 0xFFFFFFFF) + el(0x28, 0x10, b"US", us(8)) \
         + struct.pack("<HHI", 0xFFFE, 0xE00D, 0)
     seq = struct.pack("<HH2sHI", 0x08, 0x1140, b"SQ", 0, 0xFFFFFFFF) + seq_item + struct.pack("<HHI", 0xFFFE, 0xE0DD, 0)
-    d  = el(0x08, 0x20, b"DA", s(date)) + el(0x08, 0x30, b"TM", s(time)) + el(0x08, 0x60, b"CS", s("DX")) + seq
+    sd = el(0x08, 0x103E, b"LO", s(series.encode("latin-1").decode("latin-1")) if False else (series.encode("latin-1") + (b" " if len(series.encode("latin-1")) % 2 else b""))) if series else b""
+    d  = el(0x08, 0x05, b"CS", s("ISO_IR 100")) + el(0x08, 0x20, b"DA", s(date)) + el(0x08, 0x30, b"TM", s(time)) + el(0x08, 0x60, b"CS", s("DX")) + sd + seq
     d += el(0x10, 0x10, b"PN", s(patient))
     d += el(0x28, 0x02, b"US", us(1)) + el(0x28, 0x04, b"CS", s(photometric))
     d += el(0x28, 0x10, b"US", us(H)) + el(0x28, 0x11, b"US", us(W))
@@ -96,15 +97,17 @@ open(f"{out}/implicit.dcm", "wb").write(wrap(IMPL, d))
 # 6) A small "history": several patients with scans on different dates (for the library / compare view)
 series = os.path.join(out, "series"); os.makedirs(series, exist_ok=True)
 people = {
-    "Muster^Anna":   [("20240312", "093000", 120, 90), ("20250118", "141500", 128, 96), ("20251107", "081000", 136, 100)],
-    "Beispiel^Jonas": [("20250605", "110000", 100, 96), ("20251020", "160000", 150, 96)],
-    "Schmidt^Eva":   [("20251201", "120000", 128, 70)],
+    "Muster^Anna": [("20240312", "093000", 120, 90, "Thorax"), ("20250118", "141500", 128, 96, "Unterschenkel links"),
+                    ("20251107", "081000", 136, 100, "Unterschenkel links"), ("20251107", "082500", 110, 96, "Sprunggelenk links"),
+                    ("20251107", "083900", 150, 90, "Fuß seitlich")],
+    "Beispiel^Jonas": [("20250605", "110000", 100, 96, "Kniegelenk rechts"), ("20251020", "160000", 150, 96, "Kniegelenk rechts")],
+    "Schmidt^Eva": [("20251201", "120000", 128, 70, "Handgelenk")],
 }
 n = 0
 for name, scans in people.items():
-    for date, time, cx, cy in scans:
+    for date, time, cx, cy, ser in scans:
         n += 1
-        data = b"".join(struct.pack("<H", 4095 - v) for v in img(cx=cx, cy=cy, bright=1800 + 300*n, bar=40 + 20*n))
-        open(f"{series}/{name.split('^')[0].lower()}_{date}.dcm", "wb").write(
-            wrap(EXPL, dataset(EXPL, el(0x7FE0, 0x10, b"OW", data), "MONOCHROME1", patient=name, date=date, time=time)))
+        data = b"".join(struct.pack("<H", 4095 - v) for v in img(cx=cx, cy=cy, bright=1800 + 150*n, bar=40 + 10*n))
+        open(f"{series}/{name.split('^')[0].lower()}_{date}_{time}.dcm", "wb").write(
+            wrap(EXPL, dataset(EXPL, el(0x7FE0, 0x10, b"OW", data), "MONOCHROME1", patient=name, date=date, time=time, series=ser)))
 print("ok")

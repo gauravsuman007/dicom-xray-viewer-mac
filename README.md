@@ -35,9 +35,10 @@ Open a DICOM file or a whole folder (a CD's `DICOM` or `IMAGES` folder works, su
 
 ### Library and history
 
-- Scans are **grouped by patient name** (A to Z). Inside each patient they are **sorted by scan date**; switch between **Newest first** and **Oldest first** with the menu at the top of the sidebar (or **View → Sort**). Scans without a date go last.
+- Scans are **grouped by patient name** (A to Z), then **by day**, with the scans of that day listed by time. Switch between **Newest first** and **Oldest first** with the menu at the top of the sidebar (or **View → Sort**). Scans without a date go last.
+- Each scan is **named from its metadata**, for example "Unterschenkel links". The app uses the first of: series description, protocol name, study description, procedure description, body part. German umlauts are read correctly.
 - The date comes from the DICOM acquisition date, falling back to the content or study date.
-- Click a scan to view it. **⌘-click or ⇧-click** to select several and compare them. Right-click a patient to **Compare All Scans**, or to remove them from the history.
+- Click a scan to view it. **⌘-click or ⇧-click** to select several and compare them. Double-click a patient or a day (or right-click it) to **compare all of its scans**, or to remove them from the history.
 - Select scans and press **Delete** (or right-click → **Remove from History**) to forget them. This never deletes your DICOM files. **File → Clear History…** wipes the whole list.
 - The history is a small JSON file in `~/Library/Application Support/X-ray Viewer/library.json`. It stores file paths, patient names, dates and image sizes, and stays on your Mac. Files that were moved or deleted show as *(missing)*.
 

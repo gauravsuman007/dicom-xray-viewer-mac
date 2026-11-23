@@ -39,11 +39,30 @@ final class ScanCell: NSTableCellView {
         sub.isHidden = true
     }
 
+    func configure(day d: DayNode) {
+        var text = "No date"
+        if d.date.count == 8 {
+            let f = DateFormatter(); f.dateFormat = "yyyyMMdd"
+            if let date = f.date(from: d.date) {
+                let o = DateFormatter(); o.dateStyle = .medium; o.timeStyle = .none
+                let w = DateFormatter(); w.dateFormat = "EEE"
+                text = "\(w.string(from: date)), \(o.string(from: date))"
+            }
+        }
+        let s = NSMutableAttributedString(string: text, attributes: [.font: NSFont.systemFont(ofSize: 11.5, weight: .medium), .foregroundColor: NSColor.labelColor])
+        s.append(NSAttributedString(string: "   \(d.scans.count)", attributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.secondaryLabelColor]))
+        title.attributedStringValue = s
+        sub.isHidden = true
+    }
+
     func configure(scan e: ScanEntry) {
         let exists = e.exists
-        title.stringValue = e.prettyDate + (exists ? "" : "  (missing)")
+        let time = e.time.count == 6 ? "\(e.time.prefix(2)):\(e.time.dropFirst(2).prefix(2))" : ""
+        var primary = [time, e.name].filter { !$0.isEmpty }.joined(separator: "   ")
+        if primary.isEmpty { primary = e.fileName }
+        title.stringValue = primary + (exists ? "" : "  (missing)")
         title.textColor = exists ? .labelColor : .secondaryLabelColor
-        let detail = [e.modality, e.desc, "\(e.cols)×\(e.rows)"].filter { !$0.isEmpty }.joined(separator: " · ")
+        let detail = [e.modality, e.view ?? "", "\(e.cols)×\(e.rows)"].filter { !$0.isEmpty }.joined(separator: " · ")
         sub.stringValue = detail + " — " + e.fileName
         sub.isHidden = false
     }
@@ -58,7 +77,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     private(set) var ascending = false
     private var entries: [ScanEntry] = []
     private var patients: [PatientNode] = []
-    private var collapsed = Set<String>()
+    private var collapsed = Set<String>()      // patient names and "patient|date" day keys
     private var suppress = false
 
     private let outline = LibraryOutline()
@@ -90,6 +109,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         outline.allowsEmptySelection = true
         outline.backgroundColor = .clear
         outline.dataSource = self; outline.delegate = self
+        outline.target = self; outline.doubleAction = #selector(doubleClicked)
         outline.onDelete = { [weak self] in self.map { s in s.onRemove?(s.selectedPaths) } }
         let menu = NSMenu(); menu.delegate = self; outline.menu = menu
 
@@ -136,6 +156,12 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         suppress = !notify
         defer { suppress = false }
         let set = Set(paths)
+        for p in patients {                      // make sure the target scans are visible
+            for d in p.days where d.scans.contains(where: { set.contains($0.entry.path) }) {
+                outline.expandItem(p); outline.expandItem(d)
+                collapsed.remove(p.name); collapsed.remove(d.key)
+            }
+        }
         var rows = IndexSet()
         for r in 0..<outline.numberOfRows {
             if let n = outline.item(atRow: r) as? ScanNode, set.contains(n.entry.path) { rows.insert(r) }
@@ -164,7 +190,10 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         patients = buildGroups(entries, ascending: ascending)
         suppress = true
         outline.reloadData()
-        for p in patients where !collapsed.contains(p.name) { outline.expandItem(p) }
+        for p in patients where !collapsed.contains(p.name) {
+            outline.expandItem(p)
+            for d in p.days where !collapsed.contains(d.key) { outline.expandItem(d) }
+        }
         suppress = false
         select(paths: paths)
         emptyLabel.isHidden = !entries.isEmpty
@@ -181,20 +210,23 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
 
     func outlineView(_ ov: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
         if item == nil { return patients.count }
-        return (item as? PatientNode)?.scans.count ?? 0
+        if let p = item as? PatientNode { return p.days.count }
+        return (item as? DayNode)?.scans.count ?? 0
     }
-    func outlineView(_ ov: NSOutlineView, isItemExpandable item: Any) -> Bool { item is PatientNode }
+    func outlineView(_ ov: NSOutlineView, isItemExpandable item: Any) -> Bool { item is PatientNode || item is DayNode }
     func outlineView(_ ov: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
-        if let p = item as? PatientNode { return p.scans[index] }
+        if let p = item as? PatientNode { return p.days[index] }
+        if let d = item as? DayNode { return d.scans[index] }
         return patients[index]
     }
     func outlineView(_ ov: NSOutlineView, viewFor col: NSTableColumn?, item: Any) -> NSView? {
         let cell = (ov.makeView(withIdentifier: ScanCell.id, owner: self) as? ScanCell) ?? ScanCell()
         if let p = item as? PatientNode { cell.configure(patient: p) }
+        else if let d = item as? DayNode { cell.configure(day: d) }
         else if let s = item as? ScanNode { cell.configure(scan: s.entry) }
         return cell
     }
-    func outlineView(_ ov: NSOutlineView, heightOfRowByItem item: Any) -> CGFloat { item is PatientNode ? 26 : 40 }
+    func outlineView(_ ov: NSOutlineView, heightOfRowByItem item: Any) -> CGFloat { item is PatientNode ? 26 : (item is DayNode ? 24 : 40) }
 
     func outlineView(_ ov: NSOutlineView, selectionIndexesForProposedSelection proposed: IndexSet) -> IndexSet {
         IndexSet(proposed.filter { ov.item(atRow: $0) is ScanNode })     // patient rows only expand/collapse
@@ -204,10 +236,14 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         onSelect?(selectedPaths)
     }
     func outlineViewItemDidCollapse(_ n: Notification) {
-        if !suppress, let p = n.userInfo?["NSObject"] as? PatientNode { collapsed.insert(p.name) }
+        guard !suppress else { return }
+        if let p = n.userInfo?["NSObject"] as? PatientNode { collapsed.insert(p.name) }
+        if let d = n.userInfo?["NSObject"] as? DayNode { collapsed.insert(d.key) }
     }
     func outlineViewItemDidExpand(_ n: Notification) {
-        if !suppress, let p = n.userInfo?["NSObject"] as? PatientNode { collapsed.remove(p.name) }
+        guard !suppress else { return }
+        if let p = n.userInfo?["NSObject"] as? PatientNode { collapsed.remove(p.name) }
+        if let d = n.userInfo?["NSObject"] as? DayNode { collapsed.remove(d.key) }
     }
 
     // MARK: Context menu
@@ -225,12 +261,25 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             add("Compare All Scans (\(paths.count))", #selector(menuCompare(_:)), paths)
             menu.addItem(.separator())
             add("Remove Patient from History", #selector(menuRemove(_:)), paths)
+        } else if let d = outline.item(atRow: row) as? DayNode {
+            let paths = d.scans.map { $0.entry.path }
+            add("Compare This Day (\(paths.count))", #selector(menuCompare(_:)), paths)
+            menu.addItem(.separator())
+            add("Remove Day from History", #selector(menuRemove(_:)), paths)
         } else if outline.item(atRow: row) is ScanNode {
             var paths = selectedPaths
             if let n = outline.item(atRow: row) as? ScanNode, !paths.contains(n.entry.path) { paths = [n.entry.path] }
             add("Show in Finder", #selector(menuReveal(_:)), paths)
             add(paths.count > 1 ? "Remove \(paths.count) Scans from History" : "Remove from History", #selector(menuRemove(_:)), paths)
         }
+    }
+    /// Double-click a patient or a day to compare all of its scans.
+    @objc private func doubleClicked() {
+        let row = outline.clickedRow
+        guard row >= 0 else { return }
+        let item = outline.item(atRow: row)
+        let paths = (item as? PatientNode)?.scans.map { $0.entry.path } ?? (item as? DayNode)?.scans.map { $0.entry.path } ?? []
+        if paths.count > 1 { select(paths: paths, notify: true) }
     }
     @objc private func menuCompare(_ s: NSMenuItem) { select(paths: s.representedObject as? [String] ?? [], notify: true) }
     @objc private func menuRemove(_ s: NSMenuItem) { onRemove?(s.representedObject as? [String] ?? []) }

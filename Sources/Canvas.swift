@@ -139,7 +139,11 @@ final class Canvas: NSView {
         if compare {
             for t in tiles where !t.label.isEmpty {
                 let r = screenRect(t)
-                if r.width > 80 { (t.label as NSString).draw(at: NSPoint(x: r.minX + 6, y: r.maxY - 17), withAttributes: attrs) }
+                if r.width > 60 {
+                    let para = NSMutableParagraphStyle(); para.lineBreakMode = .byTruncatingTail
+                    var a = attrs; a[.paragraphStyle] = para
+                    (t.label as NSString).draw(in: NSRect(x: r.minX + 6, y: r.maxY - 18, width: r.width - 12, height: 15), withAttributes: a)
+                }
             }
         }
         for (i, line) in overlay.enumerated() {

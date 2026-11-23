@@ -68,6 +68,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
         sidebar.setSort(ascending: sortAscending)
         syncLibrary()
+        library.refreshStale { [weak self] in self?.syncLibrary() }
     }
 
     func applicationDidFinishLaunching(_ n: Notification) {
@@ -268,7 +269,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         canvas.fit()
         library.touch(tiles.map { $0.path })
         window.title = tiles.count == 1 ? (tiles[0].path as NSString).lastPathComponent : "\(tiles.count) scans"
-        if tiles.count == 1, let e = library.entries[tiles[0].path], !e.patient.isEmpty { window.title += "  —  \(e.patient)" }
+        if tiles.count == 1, let e = library.entries[tiles[0].path] {
+            if !e.name.isEmpty { window.title = e.name }
+            if !e.patient.isEmpty { window.title += "  —  \(e.patient)" }
+        }
         self.errorNote = errors.isEmpty ? nil : "\(errors.count) scan(s) could not be read"
         refreshOverlay()
     }
@@ -277,6 +281,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     func label(for path: String) -> String {
         let e = library.entries[path]
         var parts: [String] = []
+        if let e, !e.name.isEmpty { parts.append(e.name) }
         if let e, e.sortKey != nil { parts.append(e.prettyDate) }
         if showPatient, let e, !e.patient.isEmpty { parts.append(e.patient) }
         if parts.isEmpty { parts.append((path as NSString).lastPathComponent) }

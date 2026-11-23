@@ -11,6 +11,8 @@ struct ScanEntry: Codable, Hashable {
     var time: String             // HHMMSS or ""
     var modality: String
     var desc: String
+    var title: String?          // scan name from metadata (nil = not read yet by this version)
+    var view: String?           // laterality / view position
     var rows: Int
     var cols: Int
     var added: Date
@@ -25,6 +27,7 @@ struct ScanEntry: Codable, Hashable {
         let d = "\(date.prefix(4))-\(date.dropFirst(4).prefix(2))-\(date.dropFirst(6).prefix(2))"
         return time.count == 6 ? d + "  \(time.prefix(2)):\(time.dropFirst(2).prefix(2))" : d
     }
+    var name: String { title ?? "" }
     var patientKey: String { patient.isEmpty ? "Unknown patient" : patient }
     var exists: Bool { FileManager.default.fileExists(atPath: path) }
 }
@@ -61,7 +64,7 @@ final class Library {
         else { return nil }
         let path = url.standardizedFileURL.path
         return ScanEntry(path: path, patient: im.patient, patientID: im.patientID, date: im.date, time: im.time,
-                         modality: im.modality, desc: im.desc, rows: im.rows, cols: im.cols, added: Date(), lastOpened: nil)
+                         modality: im.modality, desc: im.desc, title: im.title, view: im.view, rows: im.rows, cols: im.cols, added: Date(), lastOpened: nil)
     }
 
     /// Adds files in the background; `done` runs on the main thread with the paths that were readable.
@@ -82,42 +85,76 @@ final class Library {
         }
     }
 
+    /// Entries saved by an older version lack the scan name; re-read just their headers once.
+    func refreshStale(done: @escaping () -> Void) {
+        let stale = entries.values.filter { $0.title == nil && $0.exists }.map { $0.path }
+        guard !stale.isEmpty else { return }
+        DispatchQueue.global(qos: .utility).async {
+            let fresh = stale.compactMap { Library.entry(for: URL(fileURLWithPath: $0)) }
+            DispatchQueue.main.async {
+                for var e in fresh {
+                    if let old = self.entries[e.path] { e.added = old.added; e.lastOpened = old.lastOpened }
+                    self.entries[e.path] = e
+                }
+                self.save(); done()
+            }
+        }
+    }
+
     func touch(_ paths: [String]) { for p in paths { entries[p]?.lastOpened = Date() }; save() }
     func remove(_ paths: [String]) { for p in paths { entries[p] = nil }; save() }
     func clear() { entries = [:]; save() }
 }
 
-// MARK: - Grouping for the sidebar
+// MARK: - Grouping for the sidebar: patient > day > scan
 
 final class PatientNode: NSObject {
     let name: String
-    var scans: [ScanNode] = []
+    var days: [DayNode] = []
+    var scans: [ScanNode] { days.flatMap { $0.scans } }
     init(name: String) { self.name = name }
+}
+
+final class DayNode: NSObject {
+    let date: String                 // YYYYMMDD or "" (no date)
+    var scans: [ScanNode] = []
+    unowned let parent: PatientNode
+    var key: String { parent.name + "|" + date }
+    init(date: String, parent: PatientNode) { self.date = date; self.parent = parent }
 }
 
 final class ScanNode: NSObject {
     let entry: ScanEntry
-    unowned let parent: PatientNode
-    init(_ e: ScanEntry, parent: PatientNode) { entry = e; self.parent = parent }
+    unowned let parent: DayNode
+    init(_ e: ScanEntry, parent: DayNode) { entry = e; self.parent = parent }
 }
 
-/// Patients A→Z (unknown last); scans by date, undated always at the end.
+/// Patients A→Z (unknown last); days and the scans within a day by date/time, undated always last.
 func buildGroups(_ entries: [ScanEntry], ascending: Bool) -> [PatientNode] {
+    func before(_ a: String?, _ b: String?, tie: Bool) -> Bool {
+        switch (a, b) {
+        case let (x?, y?): return x == y ? tie : (ascending ? x < y : x > y)
+        case (_?, nil): return true
+        case (nil, _?): return false
+        default: return tie
+        }
+    }
     var byPatient: [String: [ScanEntry]] = [:]
     for e in entries { byPatient[e.patientKey.lowercased(), default: []].append(e) }
     var nodes: [PatientNode] = []
     for (_, list) in byPatient {
-        let node = PatientNode(name: list[0].patientKey)
-        let sorted = list.sorted { a, b in
-            switch (a.sortKey, b.sortKey) {
-            case let (x?, y?): return x == y ? a.path.localizedStandardCompare(b.path) == .orderedAscending : (ascending ? x < y : x > y)
-            case (_?, nil): return true
-            case (nil, _?): return false
-            default: return a.path.localizedStandardCompare(b.path) == .orderedAscending
+        let patient = PatientNode(name: list[0].patientKey)
+        let byDay = Dictionary(grouping: list, by: { $0.date })
+        let days = byDay.keys.sorted { before($0.isEmpty ? nil : $0, $1.isEmpty ? nil : $1, tie: $0 < $1) }
+        for d in days {
+            let day = DayNode(date: d, parent: patient)
+            let sorted = byDay[d]!.sorted { a, b in
+                before(a.sortKey, b.sortKey, tie: a.path.localizedStandardCompare(b.path) == .orderedAscending)
             }
+            day.scans = sorted.map { ScanNode($0, parent: day) }
+            patient.days.append(day)
         }
-        node.scans = sorted.map { ScanNode($0, parent: node) }
-        nodes.append(node)
+        nodes.append(patient)
     }
     return nodes.sorted {
         if $0.name == "Unknown patient" { return false }

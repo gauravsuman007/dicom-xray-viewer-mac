@@ -23,6 +23,7 @@ struct DicomImage {
     var wc: Double?, ww: Double?      // window from the file
     var patient = "", modality = "", studyDate = "", transferSyntax = ""
     var patientID = "", date = "", time = "", desc = ""   // date YYYYMMDD, time HHMMSS (best available)
+    var title = "", view = ""                              // scan name from metadata, e.g. "Unterschenkel"; laterality/view
     var frames = 1
 }
 
@@ -51,7 +52,8 @@ struct DicomParser {
     static let longVRs: Set<String> = ["OB", "OD", "OF", "OL", "OV", "OW", "SQ", "UC", "UN", "UR", "UT"]
     static let wanted: Set<UInt32> = [
         0x00020010, 0x00080020, 0x00080022, 0x00080023, 0x00080030, 0x00080032, 0x00080033,
-        0x00080060, 0x00081030, 0x00100010, 0x00100020, 0x00180015,
+        0x00080005, 0x00080060, 0x00081030, 0x0008103E, 0x00100010, 0x00100020, 0x00180015, 0x00181030,
+        0x00185101, 0x00200060, 0x00321060, 0x00400254,
         0x00280002, 0x00280004, 0x00280006, 0x00280008, 0x00280010, 0x00280011,
         0x00280100, 0x00280101, 0x00280103, 0x00281050, 0x00281051, 0x00281052, 0x00281053,
     ]
@@ -143,9 +145,10 @@ struct DicomParser {
         }
         guard let pixels else { throw DicomError("No image data in this file (maybe a DICOMDIR index?)") }
 
+        let charset = vals[0x00080005].map { clean($0) } ?? ""
         func str(_ k: UInt32) -> String? {
             guard let v = vals[k] else { return nil }
-            let s = clean(v).split(separator: "\\").first.map(String.init) ?? ""
+            let s = clean(v, charset: charset).split(separator: "\\").first.map(String.init) ?? ""
             return s.isEmpty ? nil : s
         }
         func us(_ k: UInt32) -> Int? {
@@ -168,7 +171,8 @@ struct DicomParser {
         im.wc = Double(str(0x00281050) ?? "")
         im.ww = Double(str(0x00281051) ?? "")
         im.mono1 = photometric == "MONOCHROME1"
-        im.patient = (str(0x00100010) ?? "").replacingOccurrences(of: "^", with: " ")
+        let pn = (str(0x00100010) ?? "").split(separator: "=").first.map(String.init) ?? ""
+        im.patient = pn.replacingOccurrences(of: "^", with: " ").trimmingCharacters(in: .whitespaces)
         im.modality = str(0x00080060) ?? ""
         im.studyDate = str(0x00080020) ?? ""
         im.transferSyntax = ts
@@ -179,6 +183,10 @@ struct DicomParser {
         im.time = String((t.replacingOccurrences(of: ":", with: "") + "000000").prefix(6))
         if t.isEmpty { im.time = "" }
         im.desc = str(0x00081030) ?? str(0x00180015) ?? ""
+        // Scan name: the most specific description the file has (series > protocol > study > procedure > body part).
+        im.title = [0x0008103E, 0x00181030, 0x00081030, 0x00400254, 0x00321060, 0x00180015].compactMap { str($0) }.first ?? ""
+        let lat = str(0x00200060) ?? "", pos = str(0x00185101) ?? ""
+        im.view = [lat, pos].filter { !$0.isEmpty }.joined(separator: " ")
         if metadataOnly { return im }
 
         guard im.rows > 0, im.cols > 0, im.rows * im.cols < 400_000_000 else { throw DicomError("Invalid image size") }
@@ -229,8 +237,13 @@ struct DicomParser {
         return im
     }
 
-    func clean(_ s: ArraySlice<UInt8>) -> String {
-        String(decoding: s, as: UTF8.self).trimmingCharacters(in: CharacterSet(charactersIn: " \0\n\r"))
+    /// DICOM text: Latin-1 (ISO_IR 100, typical for German hospitals), UTF-8 (ISO_IR 192), or plain ASCII.
+    func clean(_ s: ArraySlice<UInt8>, charset: String = "") -> String {
+        let bytes = Data(s)
+        var text: String?
+        if charset.contains("IR 100") || charset.contains("IR 101") { text = String(data: bytes, encoding: .isoLatin1) }
+        else { text = String(data: bytes, encoding: .utf8) ?? String(data: bytes, encoding: .isoLatin1) }
+        return (text ?? "").trimmingCharacters(in: CharacterSet(charactersIn: " \0\n\r"))
     }
 
     func gray(from raw: ArraySlice<UInt8>, count n: Int, bitsAlloc: Int) throws -> [UInt16] {
